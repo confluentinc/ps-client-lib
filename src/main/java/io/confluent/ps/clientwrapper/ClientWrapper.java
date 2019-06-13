@@ -271,7 +271,7 @@ public class ClientWrapper {
 
     Set<Entry<MetricName, KafkaMetric>> set = metrics.entrySet();
 
-    // TODO surely there's a better solution than Olog(n) :/
+    // TODO surely there's a better solution than Olog(n) :/ - Hook into Yammer Metrics system?
     set.iterator().forEachRemaining((e) -> {
       MetricName key = e.getKey();
       String name = key.name();

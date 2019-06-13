@@ -5,19 +5,16 @@ import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_CONFIG_TOPIC;
 import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_META_DATA_TOPIC;
 import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_METRICS_TOPIC;
 import static java.util.concurrent.TimeUnit.MINUTES;
-import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.apache.commons.lang.BooleanUtils.isFalse;
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertThat;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -26,7 +23,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import org.apache.commons.lang.math.NumberUtils;
 import org.apache.commons.lang.math.RandomUtils;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -34,10 +30,6 @@ import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.awaitility.Duration;
-import org.javers.core.Javers;
-import org.javers.core.JaversBuilder;
-import org.javers.core.diff.Diff;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 import org.junit.Rule;
@@ -45,9 +37,6 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.KafkaContainer;
-
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.assertThat;
 
 public class WrapperTest {
 
@@ -195,6 +184,8 @@ public class WrapperTest {
     Future<?> submit = executorService.submit(runnable);
     Thread.sleep(PAUSE_TIME); // yield for a second
     assertThat("new client use is blocking", submit.isDone(), is(false)); // should block
+    assertThat("thread is blocked on mutex", newProducer.lock.hasQueuedThreads(), is(true)); // should block
+    assertThat("thread is blocked on mutex", newProducer.lock.getQueueLength(), greaterThan(0)); // should block
 
     // try another thread
     // try using the new producer to simulate multi threaded access during the swap
@@ -204,6 +195,9 @@ public class WrapperTest {
     Future<?> submit2 = executorService.submit(anotherRunnable);
     Thread.sleep(PAUSE_TIME); // yield for a second
     assertThat("new client use is blocking", submit2.isDone(), is(false)); // should block
+    assertThat("thread is blocked on mutex", newProducer.lock.hasQueuedThreads(), is(true)); // should block
+    assertThat("thread is blocked on mutex", newProducer.lock.getQueueLength(), greaterThan(0)); // should block
+
 
     // close the old producer
     oldProducer.close();
@@ -219,6 +213,8 @@ public class WrapperTest {
     Future<?> submit1 = executorService.submit(runnable2);
     Thread.sleep(PAUSE_TIME); // yield for a second
     assertThat("new client use is no longer blocking", submit1.isDone(), is(true));
+    assertThat("thread is blocked on mutex", newProducer.lock.hasQueuedThreads(), is(false)); // should block
+    assertThat("thread is blocked on mutex", newProducer.lock.getQueueLength(), is(0)); // should block
 
     assertThat("new client use is blocking", submit2.isDone(), is(true)); // should block
     assertThat("new client use is blocking", submit1.isDone(), is(true)); // should block

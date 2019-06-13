@@ -41,8 +41,9 @@ public class WrappedProducer implements Producer {
   public Properties customProperties = new Properties();
 
   // block calls until told the old producer is finished closing
-  private boolean blockCalls = true;
-  private final Lock lock = new ReentrantLock(true);
+  // package private for testing
+  boolean blockCalls = true;
+  final ReentrantLock lock = new ReentrantLock(true);
 
 
   public WrappedProducer(Properties newProperties) {
