@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Future;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -38,7 +40,14 @@ public class WrappedProducer implements Producer {
 
   public Properties customProperties = new Properties();
 
+  // block calls until told the old producer is finished closing
+  private boolean blockCalls = true;
+  private final Lock lock = new ReentrantLock(true);
+
+
   public WrappedProducer(Properties newProperties) {
+    // don't let this instance be used by any other threads until released (old consumer shutdown)
+    this.lock.lock();
     this.customProperties = newProperties;
 
     Properties merged = new Properties();
@@ -60,66 +69,90 @@ public class WrappedProducer implements Producer {
     return props;
   }
 
-  //////////////////////////////////////////////////
-  // Delegate generation
-  //////////////////////////////////////////////////
 
+  private void maybeBlockDuringReplacement() {
+    if (blockCalls) {
+      this.lock.lock();
+      this.lock.unlock();
+    }
+  }
+
+  // package private
+  void unblock() {
+    this.lock.unlock();
+    this.blockCalls = false;
+  }
 
   public Producer getDelegateProducer() {
     return delegateProducer;
   }
 
+  //////////////////////////////////////////////////
+  // Delegate generation
+  //////////////////////////////////////////////////
+
   public void initTransactions() {
+    maybeBlockDuringReplacement();
     delegateProducer.initTransactions();
   }
 
   public void beginTransaction() throws ProducerFencedException {
+    maybeBlockDuringReplacement();
     delegateProducer.beginTransaction();
   }
 
   public void sendOffsetsToTransaction(Map offsets, String consumerGroupId)
       throws ProducerFencedException {
+    maybeBlockDuringReplacement();
     delegateProducer.sendOffsetsToTransaction(offsets, consumerGroupId);
   }
 
   public void commitTransaction() throws ProducerFencedException {
+    maybeBlockDuringReplacement();
     delegateProducer.commitTransaction();
   }
 
   public void abortTransaction() throws ProducerFencedException {
+    maybeBlockDuringReplacement();
     delegateProducer.abortTransaction();
   }
 
   public Future<RecordMetadata> send(
       ProducerRecord record) {
+    maybeBlockDuringReplacement();
     return delegateProducer.send(record);
   }
 
   public Future<RecordMetadata> send(
       ProducerRecord record,
       Callback callback) {
+    maybeBlockDuringReplacement();
     return delegateProducer.send(record, callback);
   }
 
   public void flush() {
+    maybeBlockDuringReplacement();
     delegateProducer.flush();
   }
 
   public List<PartitionInfo> partitionsFor(String topic) {
+    maybeBlockDuringReplacement();
     return delegateProducer.partitionsFor(topic);
   }
 
   public Map<MetricName, ? extends Metric> metrics() {
+    maybeBlockDuringReplacement();
     return delegateProducer.metrics();
   }
 
   public void close() {
+    maybeBlockDuringReplacement();
     delegateProducer.close();
   }
 
   public void close(Duration timeout) {
+    maybeBlockDuringReplacement();
     delegateProducer.close(timeout);
   }
-
 
 }

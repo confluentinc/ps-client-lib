@@ -36,6 +36,7 @@ public class ClientWrapper {
   public static final String CLIENT_METRICS_TOPIC = "_confluent_client_metrics";
   public static final int TIMEOUT = 1;
 
+  // package private for testing
   WrappedProducer wrappedProducer;
   WrappedConsumer wrappedConsumer;
 
@@ -56,7 +57,8 @@ public class ClientWrapper {
   /**
    * See {@link KafkaProducer#close()}
    */
-  private void buildProducer(Properties props) {
+  // package private for testing
+  void buildProducer(Properties props) {
     // Save the old reference
     WrappedProducer oldProducer = this.wrappedProducer;
 
@@ -71,6 +73,8 @@ public class ClientWrapper {
     }
 
     registerMe();
+
+    getWrappedProducer().unblock();
   }
 
   /**
