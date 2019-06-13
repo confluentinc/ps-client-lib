@@ -1,35 +1,33 @@
 package io.confluent.ps.clientwrapper;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
+import com.google.common.collect.Maps;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.lang.StringUtils;
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.MetricName;
+import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.streams.KafkaStreams;
@@ -37,8 +35,6 @@ import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.kstream.GlobalKTable;
-import org.apache.kafka.streams.kstream.KStream;
-import org.apache.kafka.streams.kstream.KTable;
 import org.apache.kafka.streams.kstream.Materialized;
 import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
@@ -63,8 +59,9 @@ public class ClientWrapper {
   public static final String CLIENT_METRICS_TOPIC = "_confluent_client_metrics";
   public static final int TIMEOUT = 1;
 
+  private Map metricKeys = getProducerMetricsMap();
+
   ObjectMapper mapper = new ObjectMapper();
-//      .setAnnotationIntrospector(new JacksonLombokAnnotationIntrospector());
   Javers javers = JaversBuilder.javers().build();
 
   // package private for testing
@@ -120,7 +117,7 @@ public class ClientWrapper {
               WrapperClientConfg newWcConfig = mapper
                   .readValue((String) newValue, WrapperClientConfg.class);
               if (StringUtils.isEmpty(aggValue)) {
-                return (String)newValue;
+                return (String) newValue;
               }
               WrapperClientConfg aggConfig = mapper
                   .readValue(aggValue, WrapperClientConfg.class);
@@ -265,9 +262,55 @@ public class ClientWrapper {
   }
 
   private void publishMetrics() {
-    mySend(CLIENT_METRICS_TOPIC, "Some metrics...");
-    // KStream topology
-    // Some JMX metrics
+    // TODO KStream topology
+    publishJMXMetrics();
+  }
+
+  private void publishJMXMetrics() {
+    Map metrics = wrappedProducer.getDelegateProducer().metrics();
+
+    Set<Entry<MetricName, KafkaMetric>> set = metrics.entrySet();
+
+    // TODO surely there's a better solution than Olog(n) :/
+    set.iterator().forEachRemaining((e) -> {
+      MetricName key = e.getKey();
+      String name = key.name();
+      if (metricKeys.containsKey(name)) {
+        KafkaMetric value = e.getValue();
+        String simpleValue = value.metricValue().toString();
+        metricKeys.put(name, simpleValue);
+        // log.trace(name + ": " + simpleValue);
+      }
+    });
+    metricKeys.put("appId", getMyId());
+    try {
+      mySend(CLIENT_METRICS_TOPIC, mapper.writeValueAsString(metricKeys));
+    } catch (JsonProcessingException e) {
+      throw new ClientWrapperRuntimeException(e);
+    }
+  }
+
+  private Map getProducerMetricsMap() {
+    // Some select JMX metrics
+    Map metricKeys = Maps.newHashMap();
+    metricKeys.put("batch-size-avg", null);
+    metricKeys.put("batch-size-avg", null);
+    metricKeys.put("batch-split-rate", null);
+    metricKeys.put("compression-rate", null);
+    metricKeys.put("record-queue-time-max", null);
+    metricKeys.put("record-queue-time-avg", null);
+    metricKeys.put("record-retry-total", null);
+    metricKeys.put("record-retry-rate", null);
+    metricKeys.put("record-size-max", null);
+    metricKeys.put("record-size-avg", null);
+    metricKeys.put("records-per-request-avg", null);
+    metricKeys.put("request-latency-max", null);
+    metricKeys.put("request-size-avg", null);
+    metricKeys.put("request-size-max", null);
+    metricKeys.put("request-size-avg", null);
+    metricKeys.put("requests-in-flight", null);
+    metricKeys.put("version", null);
+    return metricKeys;
   }
 
   private Runnable configWatcherProcess() {
