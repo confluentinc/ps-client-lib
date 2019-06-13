@@ -1,12 +1,14 @@
 package io.confluent.ps.clientwrapper;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.xebia.jacksonlombok.JacksonLombokAnnotationIntrospector;
+import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
@@ -15,6 +17,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.lang.StringUtils;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -53,12 +58,14 @@ public class ClientWrapper {
   public static String INSTANCE_ID;
   public static final String MY_ID = UUID.randomUUID().toString();
   public static final String CLIENT_META_DATA_TOPIC = "_confluent_client_meta_data";
+  public static final String CLIENT_CONFIG_COMMANDS_TOPIC = "_confluent_client_config_commands";
   public static final String CLIENT_CONFIG_TOPIC = "_confluent_client_config";
   public static final String CLIENT_METRICS_TOPIC = "_confluent_client_metrics";
   public static final int TIMEOUT = 1;
 
-  ObjectMapper mapper = new ObjectMapper()
-      .setAnnotationIntrospector(new JacksonLombokAnnotationIntrospector());
+  ObjectMapper mapper = new ObjectMapper();
+//      .setAnnotationIntrospector(new JacksonLombokAnnotationIntrospector());
+  Javers javers = JaversBuilder.javers().build();
 
   // package private for testing
   WrappedProducer wrappedProducer;
@@ -89,17 +96,57 @@ public class ClientWrapper {
     backgroundProcesses();
   }
 
+
   private void buildKS() {
     Properties config = new Properties();
     config.put(StreamsConfig.APPLICATION_ID_CONFIG, "wordcount-application");
     config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapAddress);
     config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
     config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+    config.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, 0);
 
     // TODO assess what to do here?
 //    config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, OffsetResetStrategy.LATEST.toString().toLowerCase());
 
     StreamsBuilder builder = new StreamsBuilder();
+
+    // aggregate the incoming configs
+    builder.stream(CLIENT_CONFIG_COMMANDS_TOPIC).groupByKey().aggregate(
+        () -> "",
+        (aggKey, newValue, aggValue) -> {
+          boolean merge = true;
+          if (merge) {
+            try {
+              WrapperClientConfg newWcConfig = mapper
+                  .readValue((String) newValue, WrapperClientConfg.class);
+              if (StringUtils.isEmpty(aggValue)) {
+                return (String)newValue;
+              }
+              WrapperClientConfg aggConfig = mapper
+                  .readValue(aggValue, WrapperClientConfg.class);
+              Diff compare = javers
+                  .compare(newWcConfig, aggConfig);
+
+              log.debug("Diff in KS:\n" + compare.prettyPrint());
+
+              ObjectReader updater = mapper.readerForUpdating(aggConfig);
+              WrapperClientConfg merged = updater.readValue((String) newValue);
+
+              String output = mapper.writeValueAsString(merged);
+              log.debug("Merged result:" + output);
+              return output;
+            } catch (IOException e) {
+              log.error("Error parsing incoming config message!", e);
+              return "";
+            }
+          } else {
+            // if not merging, simply replace with new value
+            return (String) newValue;
+          }
+        }
+    ).toStream().to(CLIENT_CONFIG_TOPIC);
+
+    // broadcast all configs
     GlobalKTable<Object, Object> clientConfigTable = builder
         .globalTable(CLIENT_CONFIG_TOPIC, Materialized.as(
             CONFLUENT_CLIENT_CONFIG_STORE_NAME));
@@ -147,6 +194,7 @@ public class ClientWrapper {
   }
 
   private Properties loadConfigBootstrap() {
+    // TODO upgrade to common jackson object parser
     String aLong = this.clientConfigTable.get(this.getMyId());
     Properties p = new Properties();
     if (aLong != null) {
@@ -177,7 +225,7 @@ public class ClientWrapper {
     this.wrappedConsumer = new WrappedConsumer(props);
 
     // subscribe to config topic
-    getWrappedConsumer().subscribe(Arrays.asList(CLIENT_CONFIG_TOPIC));
+    getWrappedConsumer().subscribe(Arrays.asList(CLIENT_CONFIG_COMMANDS_TOPIC));
 
     // if the old producer existed (it will unless it's the first construction), close it. Outstanding requests get completed first, this will block.
     if (oldConsumer != null) {
@@ -218,6 +266,8 @@ public class ClientWrapper {
 
   private void publishMetrics() {
     mySend(CLIENT_METRICS_TOPIC, "Some metrics...");
+    // KStream topology
+    // Some JMX metrics
   }
 
   private Runnable configWatcherProcess() {
@@ -262,7 +312,6 @@ public class ClientWrapper {
     Properties bootstrap = loadConfigBootstrap();
 
     // lets compare them for fun
-    Javers javers = JaversBuilder.javers().build();
     Diff compare = javers.compare(bootstrap, newProducerProps);
     log.info(
         "What's difference in the signaled config vs the bootstrap table _now_:\n" + compare

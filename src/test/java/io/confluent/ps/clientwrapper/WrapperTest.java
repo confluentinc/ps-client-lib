@@ -1,5 +1,9 @@
 package io.confluent.ps.clientwrapper;
 
+import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_CONFIG_COMMANDS_TOPIC;
+import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_CONFIG_TOPIC;
+import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_META_DATA_TOPIC;
+import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_METRICS_TOPIC;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.commons.lang.BooleanUtils.isFalse;
@@ -10,7 +14,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.xebia.jacksonlombok.JacksonLombokAnnotationIntrospector;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -23,6 +28,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.apache.commons.lang.math.NumberUtils;
 import org.apache.commons.lang.math.RandomUtils;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -52,8 +60,8 @@ public class WrapperTest {
 
   public static final int PAUSE_TIME = 1; // a single ms seems to be sufficient for the code to block as expected
 
-  ObjectMapper mapper = new ObjectMapper()
-      .setAnnotationIntrospector(new JacksonLombokAnnotationIntrospector());
+  ObjectMapper mapper = new ObjectMapper();
+//      .setAnnotationIntrospector(new JacksonLombokAnnotationIntrospector());
 
   @Before
   public void setup() {
@@ -69,6 +77,23 @@ public class WrapperTest {
     log.info("info");
     log.warn("warning");
     log.error("error");
+
+    ensureTopics();
+  }
+
+  private void ensureTopics() {
+    Properties properties = new Properties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, getBootstrap());
+    AdminClient adminClient = AdminClient.create(properties);
+    List<String> topics = new ArrayList(
+        Arrays.asList(CLIENT_CONFIG_TOPIC, CLIENT_CONFIG_COMMANDS_TOPIC, CLIENT_META_DATA_TOPIC,
+            CLIENT_METRICS_TOPIC));
+    List<NewTopic> newtopics = new ArrayList<>();
+    for (String topic : topics) {
+      // TODO rep factor - need to fix this. Move to test
+      newtopics.add(new NewTopic(topic, 3, (short) 1));
+    }
+    adminClient.createTopics(newtopics);
   }
 
   private String getBootstrap() {
@@ -114,7 +139,7 @@ public class WrapperTest {
     String jsonString = mapper.writeValueAsString(c);
 
     cw.getWrappedProducer().send(
-        new ProducerRecord(ClientWrapper.CLIENT_CONFIG_TOPIC, ClientWrapper.APPLICATION_NAME,
+        new ProducerRecord(CLIENT_CONFIG_COMMANDS_TOPIC, ClientWrapper.APPLICATION_NAME,
             jsonString)).get();
   }
 
@@ -132,7 +157,7 @@ public class WrapperTest {
     WrapperClientConfg newConfig = getNewConfig();
     newConfig.configs.put(ProducerConfig.ACKS_CONFIG, "all");
     String jsonString = mapper.writeValueAsString(newConfig);
-    wp.send(new ProducerRecord(ClientWrapper.CLIENT_CONFIG_TOPIC, ClientWrapper.APPLICATION_NAME,
+    wp.send(new ProducerRecord(CLIENT_CONFIG_COMMANDS_TOPIC, ClientWrapper.APPLICATION_NAME,
         jsonString)).get();
   }
 
@@ -143,7 +168,7 @@ public class WrapperTest {
     WrapperClientConfg newConfig = getNewConfig();
     newConfig.configs.put(ProducerConfig.ACKS_CONFIG, "1");
     String jsonString = mapper.writeValueAsString(newConfig);
-    wp.send(new ProducerRecord(ClientWrapper.CLIENT_CONFIG_TOPIC, ClientWrapper.APPLICATION_NAME,
+    wp.send(new ProducerRecord(CLIENT_CONFIG_COMMANDS_TOPIC, ClientWrapper.APPLICATION_NAME,
         jsonString)).get();
   }
 
