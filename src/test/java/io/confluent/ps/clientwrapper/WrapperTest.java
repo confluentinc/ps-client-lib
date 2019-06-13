@@ -3,6 +3,7 @@ package io.confluent.ps.clientwrapper;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.awaitility.Awaitility.await;
 
+import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -32,16 +33,28 @@ public class WrapperTest {
   @Test
   public void BasicTest() throws InterruptedException, ExecutionException, TimeoutException {
     ClientWrapper cw = new ClientWrapper();
-    while(true) {
+//    while(true) {
       sendConfigMessage(cw);
-      Thread.sleep(2000);
-    }
+//      Thread.sleep(2000);
+//    }
 
-//    await().atMost(5, MINUTES).until(() -> false, is(true));
+    await().atMost(5, MINUTES).until(() -> false, is(true));
   }
 
-  private void sendConfigMessage(ClientWrapper cw) {
-    cw.getWrappedProducer().send(new ProducerRecord(ClientWrapper.CLIENT_CONFIG_TOPIC, ClientWrapper.APPLICATION_NAME, "a-config-" + Math.random()));
+  private void sendConfigMessage(ClientWrapper cw) throws ExecutionException, InterruptedException {
+    cw.getWrappedProducer().send(new ProducerRecord(ClientWrapper.CLIENT_CONFIG_TOPIC, ClientWrapper.APPLICATION_NAME, "a-config-" + Math.random())).get();
+  }
+
+  @Test
+  public void testChangeAcksModeAll() throws ExecutionException, InterruptedException {
+    WrappedProducer wp = new WrappedProducer(new Properties());
+    wp.send(new ProducerRecord(ClientWrapper.CLIENT_CONFIG_TOPIC, ClientWrapper.APPLICATION_NAME, "acks=all")).get();
+  }
+
+  @Test
+  public void testChangeAcksModeOne() throws ExecutionException, InterruptedException {
+    WrappedProducer wp = new WrappedProducer(new Properties());
+    wp.send(new ProducerRecord(ClientWrapper.CLIENT_CONFIG_TOPIC, ClientWrapper.APPLICATION_NAME, "acks=1")).get();
   }
 
 }

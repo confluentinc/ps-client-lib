@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import org.apache.commons.lang.StringUtils;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -144,16 +145,20 @@ public class ClientWrapper {
   }
 
   private void processConfigMessage(ConsumerRecord cr) {
-    log.debug("Config message received: " + cr);
-    reconfigureClients();
+    log.debug("Config message received: " + cr.value());
+    reconfigureClients((String)cr.value());
   }
 
-  private void reconfigureClients() {
+  private void reconfigureClients(String value) {
     // TODO switch either producer or consumer configs or both?
     // TODO actually extract properties
     // Parse the new config
     Properties newProducerProps = new Properties();
     // TODO remove random client id and check JMX collision doesn't happen
+    if(StringUtils.contains(value,"acks")){
+      String acksval = StringUtils.remove(value, "acks=");
+      newProducerProps.put(ProducerConfig.ACKS_CONFIG, acksval);
+    }
     newProducerProps.put(ProducerConfig.CLIENT_ID_CONFIG,
         "KafkaExampleProducer-" + UUID.randomUUID().toString());
     log.info("Replace the old producer...");
