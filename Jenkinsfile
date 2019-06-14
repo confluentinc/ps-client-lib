@@ -18,6 +18,21 @@ node('docker-oraclejdk8') {
   stage('Build') {
       withMaven(
           globalMavenSettingsConfig: 'jenkins-maven-global-settings'
-      )
+      ){
+          withDockerServer([uri: dockerHost()]) {
+             withEnv(['MAVEN_OPTS=-XX:MaxPermSize=128M']) {
+                 sh "mvn --batch-mode -Pjenkins clean verify install dependency:analyze validate -U"
+             }
+          }
+       }
+  }
+  def previous = currentBuild.previousBuild
+  if ( currentBuild.currentResult == 'FAILURE' || ( previous != null && previous.currentResult == 'FAILURE' ) ) {
+    slackNotify(
+        status: currentBuild.currentResult,
+        channel: '#cs-consulting-eng',
+        always: false,
+        dryrun: false,
+    )
   }
 }
