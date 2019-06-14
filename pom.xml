@@ -7,11 +7,27 @@
   <groupId>io.confluent.ps</groupId>
   <artifactId>client-wrapper</artifactId>
   <version>0.1-SNAPSHOT</version>
+
+  <organization>
+    <name>Confluent, Inc.</name>
+    <url>http://confluent.io</url>
+  </organization>
+  <url>http://confluent.io</url>
+  <description>
+    Kafka Client Enhancements
+  </description>
+
+  <properties>
+    <java.version>1.8</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <version.kafka>2.2.1</version.kafka>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-clients</artifactId>
-      <version>2.2.1</version>
+      <version>${version.kafka}</version>
     </dependency>
     <dependency>
       <groupId>junit</groupId>
@@ -38,7 +54,7 @@
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-streams</artifactId>
-      <version>2.2.1</version>
+      <version>${version.kafka}</version>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
@@ -71,6 +87,15 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-core</artifactId>
       <version>2.9.9</version>
+    </dependency>
+    <!-- Used for temp directory -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-clients</artifactId>
+      <version>${version.kafka}</version>
+      <classifier>test</classifier>
+      <!-- TODO move to test -->
+      <scope>compile</scope>
     </dependency>
   </dependencies>
 
