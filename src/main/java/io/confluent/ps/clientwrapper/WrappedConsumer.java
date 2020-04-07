@@ -1,26 +1,15 @@
 package io.confluent.ps.clientwrapper;
 
-import java.time.Duration;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
-import org.apache.kafka.clients.consumer.Consumer;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.clients.consumer.OffsetAndMetadata;
-import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
-import org.apache.kafka.clients.consumer.OffsetCommitCallback;
-import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 public class WrappedConsumer implements Consumer {
 
@@ -88,7 +77,7 @@ public class WrappedConsumer implements Consumer {
 
   @Override
   public void subscribe(Collection topics,
-      ConsumerRebalanceListener callback) {
+                        ConsumerRebalanceListener callback) {
     wrappedConsumer.subscribe(topics, callback);
   }
 
@@ -99,7 +88,7 @@ public class WrappedConsumer implements Consumer {
 
   @Override
   public void subscribe(Pattern pattern,
-      ConsumerRebalanceListener callback) {
+                        ConsumerRebalanceListener callback) {
     wrappedConsumer.subscribe(pattern, callback);
   }
 
@@ -150,7 +139,7 @@ public class WrappedConsumer implements Consumer {
 
   @Override
   public void commitAsync(Map offsets,
-      OffsetCommitCallback callback) {
+                          OffsetCommitCallback callback) {
     wrappedConsumer.commitAsync(offsets, callback);
   }
 
@@ -161,7 +150,7 @@ public class WrappedConsumer implements Consumer {
 
   @Override
   public void seek(TopicPartition partition,
-      OffsetAndMetadata offsetAndMetadata) {
+                   OffsetAndMetadata offsetAndMetadata) {
     wrappedConsumer.seek(partition, offsetAndMetadata);
   }
 
@@ -209,7 +198,7 @@ public class WrappedConsumer implements Consumer {
 
   @Override
   public List<PartitionInfo> partitionsFor(String topic,
-      Duration timeout) {
+                                           Duration timeout) {
     return wrappedConsumer.partitionsFor(topic, timeout);
   }
 
@@ -306,4 +295,13 @@ public class WrappedConsumer implements Consumer {
     throw new DeprecatedException();
   }
 
+  @Override
+  public Map<TopicPartition, OffsetAndMetadata> committed(Set set) {
+    throw new UnsupportedOperationException("Not implemented yet");
+  }
+
+  @Override
+  public Map<TopicPartition, OffsetAndMetadata> committed(Set set, Duration duration) {
+    throw new UnsupportedOperationException("Not implemented yet");
+  }
 }
