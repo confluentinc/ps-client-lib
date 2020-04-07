@@ -51,7 +51,6 @@ public class ClientWrapper {
   public static final String CLIENT_META_DATA_TOPIC = "_confluent_client_meta_data";
   public static final String CLIENT_CONFIG_COMMANDS_TOPIC = "_confluent_client_config_commands";
   public static final String CLIENT_CONFIG_TOPIC = "_confluent_client_config";
-  public static final String CLIENT_METRICS_TOPIC = "_confluent_client_metrics";
   public static final int TIMEOUT = 1;
 
   ObjectMapper mapper = new ObjectMapper();
@@ -228,37 +227,10 @@ public class ClientWrapper {
   private void backgroundProcesses() {
     log.info("Load background processes...");
     Runnable config = configWatcherProcess();
-    Runnable metrics = metricsPublisher();
     ExecutorService executorService =
-        new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
+        new ThreadPoolExecutor(1, 2, 0L, TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<Runnable>());
     executorService.execute(config);
-    executorService.execute(metrics);
-  }
-
-  private Runnable metricsPublisher() {
-    log.info("Start metrics publisher...");
-    Runnable metricsPublisher = () -> {
-      // change to non blocking wait
-      try {
-        while (true) {
-          log.info("Publish metrics...");
-          publishMetrics();
-          long sleepTimeMillis = (long) (10000 * Math.random());
-          TimeUnit.MILLISECONDS.sleep(sleepTimeMillis);
-          //Thread.sleep((long) Math.random() * Duration.ofMinutes(2).toMillis());
-        }
-      } catch (Exception e) {
-        e.printStackTrace();
-      }
-    };
-    return metricsPublisher;
-  }
-
-  private void publishMetrics() {
-    mySend(CLIENT_METRICS_TOPIC, "Some metrics...");
-    // KStream topology
-    // Some JMX metrics
   }
 
   private Runnable configWatcherProcess() {

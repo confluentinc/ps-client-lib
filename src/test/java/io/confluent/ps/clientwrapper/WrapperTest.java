@@ -66,8 +66,7 @@ public class WrapperTest {
     properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, getBootstrap());
     AdminClient adminClient = AdminClient.create(properties);
     List<String> topics = new ArrayList(
-        Arrays.asList(CLIENT_CONFIG_TOPIC, CLIENT_CONFIG_COMMANDS_TOPIC, CLIENT_META_DATA_TOPIC,
-            CLIENT_METRICS_TOPIC));
+        Arrays.asList(CLIENT_CONFIG_TOPIC, CLIENT_CONFIG_COMMANDS_TOPIC, CLIENT_META_DATA_TOPIC));
     List<NewTopic> newtopics = new ArrayList<>();
     for (String topic : topics) {
       // TODO rep factor - need to fix this. Move to test
