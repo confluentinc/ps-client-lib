@@ -10,4 +10,8 @@ protocol Metrics {
   record MetricValueAVRO {
     string value;
   }
+
+  record MetricRecords {
+    map<
+  }
 }
