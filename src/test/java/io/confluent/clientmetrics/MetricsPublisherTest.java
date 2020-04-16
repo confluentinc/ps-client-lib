@@ -43,6 +43,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,7 +56,7 @@ public class MetricsPublisherTest {
     public KafkaContainer kafka = new KafkaContainer("5.4.1");
 
     @Test
-    public void publishMetricsForAdminClientAsString() {
+    public void publishMetricsForAdminClientAsJSON() {
         final String topicName = "_metrics_" + UUID.randomUUID().toString();
         final MetricsSender<String> metricsSender = new MetricsJSONSender();
         final MetricsPublisher<String> metricsPublisher = new MetricsPublisher<>(metricsSender, topicName);
@@ -110,7 +111,7 @@ public class MetricsPublisherTest {
     }
 
     @Test
-    public void publishMetricsForStreamsClientAsString() {
+    public void publishMetricsForStreamsClientAsJSON() {
         final String topicName = "_metrics_" + UUID.randomUUID().toString();
         final MetricsSender<String> metricsSender = new MetricsJSONSender();
         final MetricsPublisher<String> metricsPublisher = new MetricsPublisher<>(metricsSender, topicName);
@@ -206,13 +207,14 @@ public class MetricsPublisherTest {
                         ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName(),
                         ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, KafkaAvroDeserializer.class.getName(),
                         KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistry.getTarget(),
+                        KafkaAvroDeserializerConfig.SPECIFIC_AVRO_READER_CONFIG, true,
                         ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
                         ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
                         ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
                         ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
                 ));
 
-        try (producer; consumer) {
+        try (producer; consumer; schemaRegistry) {
             metricsPublisher.sendMetrics(producer, adminClient::metrics);
 
             consumer.subscribe(Collections.singletonList(topicName));
@@ -231,7 +233,7 @@ public class MetricsPublisherTest {
                 printAVRO(records);
 
                 assertThat(records)
-                        .flatExtracting(s -> s.value().getMetrics().keySet())
+                        .flatExtracting(s -> s.value().getMetrics().keySet().stream().map(Object::toString).collect(Collectors.toSet()))
                         .contains("version_app-info", "request-total_admin-client-metrics", "count_kafka-metrics-count");
 
                 return true;
@@ -269,13 +271,14 @@ public class MetricsPublisherTest {
                         ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName(),
                         ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, KafkaAvroDeserializer.class.getName(),
                         KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistry.getTarget(),
+                        KafkaAvroDeserializerConfig.SPECIFIC_AVRO_READER_CONFIG, true,
                         ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
                         ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
                         ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
                         ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
                 ));
 
-        try (producer; consumer) {
+        try (producer; consumer; schemaRegistry) {
             metricsPublisher.sendMetrics(producer, streamsClient::metrics);
 
             consumer.subscribe(Collections.singletonList(topicName));
@@ -294,7 +297,7 @@ public class MetricsPublisherTest {
                 printAVRO(records);
 
                 assertThat(records)
-                        .flatExtracting(s -> s.value().getMetrics().keySet())
+                        .flatExtracting(s -> s.value().getMetrics().keySet().stream().map(Object::toString).collect(Collectors.toSet()))
                         .contains("version_app-info", "poll-rate_stream-metrics", "application-id_stream-metrics");
 
                 return true;
