@@ -1,13 +1,17 @@
 package io.confluent.clientmetrics;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
-import io.confluent.clientmetrics.MetricsPublisher.MetricsPublisherAVROSender;
-import io.confluent.clientmetrics.MetricsPublisher.MetricsPublisherJSONSender;
-import io.confluent.clientmetrics.MetricsPublisher.MetricsPublisherSender;
-import io.confluent.clientmetrics.avro.MetricNameAVRO;
-import io.confluent.clientmetrics.avro.MetricValueAVRO;
+import io.confluent.clientmetrics.MetricsPublisher.MetricsAVROSender;
+import io.confluent.clientmetrics.MetricsPublisher.MetricsJSONSender;
+import io.confluent.clientmetrics.MetricsPublisher.MetricsSender;
+import io.confluent.clientmetrics.avro.AVROMetricRecords;
+import io.confluent.kafka.serializers.KafkaAvroDeserializer;
+import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import io.confluent.kafka.serializers.KafkaAvroSerializer;
+import io.confluent.kafka.serializers.KafkaAvroSerializerConfig;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -30,6 +34,8 @@ import org.rnorth.ducttape.unreliables.Unreliables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.KafkaContainer;
+import org.testcontainers.containers.output.Slf4jLogConsumer;
+import org.testcontainers.containers.wait.strategy.Wait;
 
 import java.time.Duration;
 import java.util.Collections;
@@ -42,170 +48,278 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 public class MetricsPublisherTest {
 
-  private final Logger log = LoggerFactory.getLogger(MetricsPublisherTest.class);
-  private final ObjectMapper mapper = new ObjectMapper();
+    private final Logger log = LoggerFactory.getLogger(MetricsPublisherTest.class);
+    private final ObjectMapper mapper = new ObjectMapper();
 
-  @Rule
-  public KafkaContainer kafka = new KafkaContainer();
+    @Rule
+    public KafkaContainer kafka = new KafkaContainer("5.4.1");
 
-  @Test
-  public void publishMetricsForAdminClientAsString() {
-    final String topicName = "_metrics_" + UUID.randomUUID().toString();
-    final MetricsPublisherSender<String, String> protocol = new MetricsPublisherJSONSender();
-    final MetricsPublisher<String, String> metricsPublisher = new MetricsPublisher<>(protocol, topicName);
-    final Admin adminClient = makeKafkaAdminClient();
+    @Test
+    public void publishMetricsForAdminClientAsString() {
+        final String topicName = "_metrics_" + UUID.randomUUID().toString();
+        final MetricsSender<String> metricsSender = new MetricsJSONSender();
+        final MetricsPublisher<String> metricsPublisher = new MetricsPublisher<>(metricsSender, topicName);
+        final Admin adminClient = makeKafkaAdminClient();
 
-    final KafkaProducer<String, String> producer = new KafkaProducer<>(
-        ImmutableMap.of(
-            ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
-            ProducerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString()
-        ),
-        new StringSerializer(), new StringSerializer()
-    );
+        final KafkaProducer<String, String> producer = new KafkaProducer<>(
+                ImmutableMap.of(
+                        ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ProducerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString()
+                ),
+                new StringSerializer(), new StringSerializer()
+        );
 
-    final KafkaConsumer<String, String> consumer = new KafkaConsumer<>(
-        ImmutableMap.of(
-            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
-            ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
-            ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
-            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
-        ),
-        new StringDeserializer(), new StringDeserializer()
-    );
+        final KafkaConsumer<String, String> consumer = new KafkaConsumer<>(
+                ImmutableMap.of(
+                        ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
+                ),
+                new StringDeserializer(), new StringDeserializer()
+        );
 
-    try (producer; consumer) {
-      metricsPublisher.sendMetrics(producer, adminClient::metrics);
+        try (producer; consumer) {
+            metricsPublisher.sendMetrics(producer, adminClient::metrics);
 
-      consumer.subscribe(Collections.singletonList(topicName));
+            consumer.subscribe(Collections.singletonList(topicName));
 
-      Unreliables.retryUntilTrue(20, TimeUnit.SECONDS, () -> {
-        final ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+            Unreliables.retryUntilTrue(20, TimeUnit.SECONDS, () -> {
+                final ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
 
-        if (records.isEmpty()) {
-          return false;
+                if (records.isEmpty()) {
+                    return false;
+                }
+
+                assertThat(records).hasSize(1)
+                        .extracting(ConsumerRecord::topic, ConsumerRecord::serializedKeySize)
+                        .containsExactly(Tuple.tuple(topicName, -1));
+
+                printJSON(records);
+
+                assertThat(records)
+                        .flatExtracting(s -> mapper.readValue(s.value(), new TypeReference<Map<String, String>>() {
+                        }).keySet())
+                        .contains("version_app-info", "request-total_admin-client-metrics", "count_kafka-metrics-count");
+
+                return true;
+            });
+
+            consumer.unsubscribe();
         }
-
-        records.forEach(s -> log.info(s.value()));
-
-        assertThat(records).hasSize(1)
-            .extracting(ConsumerRecord::topic, ConsumerRecord::serializedKeySize)
-            .containsExactly(Tuple.tuple(topicName, -1));
-
-        assertThat(records)
-            .flatExtracting(s -> mapper.readValue(s.value(), Map.class).keySet())
-            .contains("version_app-info", "request-total_admin-client-metrics");
-
-        return true;
-      });
-
-      consumer.unsubscribe();
     }
-  }
 
-  @Test
-  public void publishMetricsForStreamsClientAsString() {
-    final String topicName = "_metrics_" + UUID.randomUUID().toString();
-    final MetricsPublisherSender<String, String> protocol = new MetricsPublisherJSONSender();
-    final MetricsPublisher<String, String> metricsPublisher = new MetricsPublisher<>(protocol, topicName);
-    final KafkaStreams streamsClient = makeKafkaStreamsClient();
+    @Test
+    public void publishMetricsForStreamsClientAsString() {
+        final String topicName = "_metrics_" + UUID.randomUUID().toString();
+        final MetricsSender<String> metricsSender = new MetricsJSONSender();
+        final MetricsPublisher<String> metricsPublisher = new MetricsPublisher<>(metricsSender, topicName);
+        final KafkaStreams streamsClient = makeKafkaStreamsClient();
 
-    final KafkaProducer<String, String> producer = new KafkaProducer<>(
-        ImmutableMap.of(
-            ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
-            ProducerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString()
-        ),
-        new StringSerializer(), new StringSerializer()
-    );
+        final KafkaProducer<String, String> producer = new KafkaProducer<>(
+                ImmutableMap.of(
+                        ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ProducerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString()
+                ),
+                new StringSerializer(), new StringSerializer()
+        );
 
-    final KafkaConsumer<String, String> consumer = new KafkaConsumer<>(
-        ImmutableMap.of(
-            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
-            ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
-            ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
-            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
-        ),
-        new StringDeserializer(), new StringDeserializer()
-    );
+        final KafkaConsumer<String, String> consumer = new KafkaConsumer<>(
+                ImmutableMap.of(
+                        ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
+                ),
+                new StringDeserializer(), new StringDeserializer()
+        );
 
-    try (producer; consumer) {
-      metricsPublisher.sendMetrics(producer, streamsClient::metrics);
+        try (producer; consumer) {
+            metricsPublisher.sendMetrics(producer, streamsClient::metrics);
 
-      consumer.subscribe(Collections.singletonList(topicName));
+            consumer.subscribe(Collections.singletonList(topicName));
 
-      Unreliables.retryUntilTrue(20, TimeUnit.SECONDS, () -> {
-        final ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+            Unreliables.retryUntilTrue(20, TimeUnit.SECONDS, () -> {
+                final ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
 
-        if (records.isEmpty()) {
-          return false;
+                if (records.isEmpty()) {
+                    return false;
+                }
+
+                assertThat(records).hasSize(1)
+                        .extracting(ConsumerRecord::topic, ConsumerRecord::serializedKeySize)
+                        .containsExactly(Tuple.tuple(topicName, -1));
+
+                printJSON(records);
+
+                assertThat(records)
+                        .flatExtracting(s -> mapper.readValue(s.value(), new TypeReference<Map<String, String>>() {
+                        }).keySet())
+                        .contains("version_app-info", "poll-rate_stream-metrics", "application-id_stream-metrics");
+
+                return true;
+            });
+
+            consumer.unsubscribe();
         }
-
-        records.forEach(s -> log.info(s.value()));
-
-        assertThat(records).hasSize(1)
-            .extracting(ConsumerRecord::topic, ConsumerRecord::serializedKeySize)
-            .containsExactly(Tuple.tuple(topicName, -1));
-
-        assertThat(records)
-            .flatExtracting(s -> mapper.readValue(s.value(), Map.class).keySet())
-            .contains("version_app-info", "request-total_admin-client-metrics", "skipped-records-rate_stream-metrics");
-
-        return true;
-      });
-
-      consumer.unsubscribe();
     }
-  }
 
-  @Test
-  public void publishMetricsForAdminClientAsAVRO() {
-    final Properties props = new Properties();
-    props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
-    props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, KafkaAvroSerializer.class.getName());
-    props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, KafkaAvroSerializer.class.getName());
-    props.put("schema.registry.url", "http://localhost:8081");
+    private void printJSON(ConsumerRecords<String, String> records) {
+        records.forEach(rec -> {
+            try {
+                mapper.readValue(rec.value(), new TypeReference<Map<String, String>>() {
+                }).forEach((key, value) -> log.info(key + " = " + value));
+            } catch (JsonProcessingException ignored) {
+            }
+        });
+    }
 
-    final MetricsPublisherSender<MetricNameAVRO, MetricValueAVRO> protocol = new MetricsPublisherAVROSender();
-    final MetricsPublisher<MetricNameAVRO, MetricValueAVRO> metricsPublisher = new MetricsPublisher<>(protocol);
-    final KafkaProducer<MetricNameAVRO, MetricValueAVRO> producer = new KafkaProducer<>(props);
-    final Admin adminClient = makeKafkaAdminClient();
+    private void printAVRO(ConsumerRecords<String, AVROMetricRecords> records) {
+        records.forEach(rec -> rec.value().getMetrics().forEach((key, value) -> log.info(key + " = " + value)));
+    }
 
-    log.info("Publishing Kafka Admin metrics...");
-    metricsPublisher.sendMetrics(producer, adminClient::metrics);
-  }
+    @Test
+    public void publishMetricsForAdminClientAsAVRO() {
+        final String topicName = "_metrics_" + UUID.randomUUID().toString();
+        final MetricsSender<AVROMetricRecords> metricsSender = new MetricsAVROSender();
+        final MetricsPublisher<AVROMetricRecords> metricsPublisher = new MetricsPublisher<>(metricsSender, topicName);
+        final Admin adminClient = makeKafkaAdminClient();
 
-  @Test
-  public void publishMetricsForStreamsClientAsAVRO() {
-    final Properties props = new Properties();
-    props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
-    props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, KafkaAvroSerializer.class.getName());
-    props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, KafkaAvroSerializer.class.getName());
-    props.put("schema.registry.url", "http://localhost:8081");
+        final SchemaRegistryContainer schemaRegistry = new SchemaRegistryContainer("5.4.1");
 
-    final MetricsPublisherSender<MetricNameAVRO, MetricValueAVRO> protocol = new MetricsPublisherAVROSender();
-    final MetricsPublisher<MetricNameAVRO, MetricValueAVRO> metricsPublisher = new MetricsPublisher<>(protocol);
-    final KafkaProducer<MetricNameAVRO, MetricValueAVRO> producer = new KafkaProducer<>(props);
-    final KafkaStreams streamsClient = makeKafkaStreamsClient();
+        schemaRegistry.withKafka(kafka)
+                .withLogConsumer(new Slf4jLogConsumer(log))
+                .waitingFor(Wait.forHttp("/subjects").forStatusCode(200))
+                .start();
 
-    log.info("Publishing Kafka Streams metrics...");
-    metricsPublisher.sendMetrics(producer, streamsClient::metrics);
-  }
+        final KafkaProducer<String, AVROMetricRecords> producer = new KafkaProducer<>(
+                Map.of(
+                        ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName(),
+                        ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, KafkaAvroSerializer.class.getName(),
+                        KafkaAvroSerializerConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistry.getTarget(),
+                        ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ProducerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString()
+                ));
 
-  private Admin makeKafkaAdminClient() {
-    final Properties props = new Properties();
-    props.put(AdminClientConfig.CLIENT_ID_CONFIG, "test-client-metrics-admin");
-    props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
+        final KafkaConsumer<String, AVROMetricRecords> consumer = new KafkaConsumer<>(
+                Map.of(
+                        ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName(),
+                        ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, KafkaAvroDeserializer.class.getName(),
+                        KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistry.getTarget(),
+                        ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
+                ));
 
-    return AdminClient.create(props);
-  }
+        try (producer; consumer) {
+            metricsPublisher.sendMetrics(producer, adminClient::metrics);
 
-  private KafkaStreams makeKafkaStreamsClient() {
-    final Properties props = new Properties();
-    props.put(StreamsConfig.APPLICATION_ID_CONFIG, "test-client-metrics-application");
-    props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
-    props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
-    props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+            consumer.subscribe(Collections.singletonList(topicName));
 
-    final StreamsBuilder builder = new StreamsBuilder();
-    return new KafkaStreams(builder.build(), props);
-  }
+            Unreliables.retryUntilTrue(20, TimeUnit.SECONDS, () -> {
+                final ConsumerRecords<String, AVROMetricRecords> records = consumer.poll(Duration.ofMillis(100));
+
+                if (records.isEmpty()) {
+                    return false;
+                }
+
+                assertThat(records).hasSize(1)
+                        .extracting(ConsumerRecord::topic, ConsumerRecord::serializedKeySize)
+                        .containsExactly(Tuple.tuple(topicName, -1));
+
+                printAVRO(records);
+
+                assertThat(records)
+                        .flatExtracting(s -> s.value().getMetrics().keySet())
+                        .contains("version_app-info", "request-total_admin-client-metrics", "count_kafka-metrics-count");
+
+                return true;
+            });
+
+            consumer.unsubscribe();
+        }
+    }
+
+    @Test
+    public void publishMetricsForStreamsClientAsAVRO() {
+        final String topicName = "_metrics_" + UUID.randomUUID().toString();
+        final MetricsSender<AVROMetricRecords> metricsSender = new MetricsAVROSender();
+        final MetricsPublisher<AVROMetricRecords> metricsPublisher = new MetricsPublisher<>(metricsSender, topicName);
+        final KafkaStreams streamsClient = makeKafkaStreamsClient();
+
+        final SchemaRegistryContainer schemaRegistry = new SchemaRegistryContainer("5.4.1");
+
+        schemaRegistry.withKafka(kafka)
+                .withLogConsumer(new Slf4jLogConsumer(log))
+                .waitingFor(Wait.forHttp("/subjects").forStatusCode(200))
+                .start();
+
+        final KafkaProducer<String, AVROMetricRecords> producer = new KafkaProducer<>(
+                Map.of(
+                        ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName(),
+                        ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, KafkaAvroSerializer.class.getName(),
+                        KafkaAvroSerializerConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistry.getTarget(),
+                        ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ProducerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString()
+                ));
+
+        final KafkaConsumer<String, AVROMetricRecords> consumer = new KafkaConsumer<>(
+                Map.of(
+                        ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName(),
+                        ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, KafkaAvroDeserializer.class.getName(),
+                        KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistry.getTarget(),
+                        ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                        ConsumerConfig.CLIENT_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
+                        ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
+                ));
+
+        try (producer; consumer) {
+            metricsPublisher.sendMetrics(producer, streamsClient::metrics);
+
+            consumer.subscribe(Collections.singletonList(topicName));
+
+            Unreliables.retryUntilTrue(20, TimeUnit.SECONDS, () -> {
+                final ConsumerRecords<String, AVROMetricRecords> records = consumer.poll(Duration.ofMillis(100));
+
+                if (records.isEmpty()) {
+                    return false;
+                }
+
+                assertThat(records).hasSize(1)
+                        .extracting(ConsumerRecord::topic, ConsumerRecord::serializedKeySize)
+                        .containsExactly(Tuple.tuple(topicName, -1));
+
+                printAVRO(records);
+
+                assertThat(records)
+                        .flatExtracting(s -> s.value().getMetrics().keySet())
+                        .contains("version_app-info", "poll-rate_stream-metrics", "application-id_stream-metrics");
+
+                return true;
+            });
+
+            consumer.unsubscribe();
+        }
+    }
+
+    private Admin makeKafkaAdminClient() {
+        final Properties props = new Properties();
+        props.put(AdminClientConfig.CLIENT_ID_CONFIG, "test-client-metrics-admin");
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
+
+        return AdminClient.create(props);
+    }
+
+    private KafkaStreams makeKafkaStreamsClient() {
+        final Properties props = new Properties();
+        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "test-client-metrics-application");
+        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
+        props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+
+        final StreamsBuilder builder = new StreamsBuilder();
+        return new KafkaStreams(builder.build(), props);
+    }
 }

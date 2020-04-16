@@ -2,14 +2,13 @@ package io.confluent.clientmetrics;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.confluent.clientmetrics.avro.MetricNameAVRO;
-import io.confluent.clientmetrics.avro.MetricValueAVRO;
+import io.confluent.clientmetrics.avro.AVROMetricRecords;
+import io.confluent.clientmetrics.avro.AVROMetricValue;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
 
-import java.util.AbstractMap.SimpleEntry;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -20,80 +19,84 @@ import java.util.stream.Collectors;
  * final ScheduledExecutorService executorService = Executors.newScheduledThreadPool(1);
  * executorService.scheduleAtFixedRate(() -> sendMetrics(producer, streamsClient), 0, 1, TimeUnit.SECONDS);
  */
-public class MetricsPublisher<K, V> {
+public class MetricsPublisher<V> {
 
-  private static final String DEFAULT_METRICS_TOPIC = "_confluent_client_metrics";
+    private static final String DEFAULT_METRICS_TOPIC = "_confluent_client_metrics";
 
-  private final String clientMetricsTopic;
-  private final MetricsPublisherSender<K, V> actualPublisher;
+    private final String clientMetricsTopic;
+    private final MetricsSender<V> metricsSender;
 
-  public MetricsPublisher(MetricsPublisherSender<K, V> actualPublisher) {
-    this(actualPublisher, DEFAULT_METRICS_TOPIC);
-  }
-
-  public MetricsPublisher(MetricsPublisherSender<K, V> actualPublisher, String clientMetricsTopic) {
-    this.actualPublisher = actualPublisher;
-    this.clientMetricsTopic = clientMetricsTopic;
-  }
-
-  public void sendMetrics(KafkaProducer<K, V> kafkaProducer, Supplier<Map<MetricName, ? extends Metric>> metricsSupplier) {
-    this.actualPublisher.sendMetrics(this.clientMetricsTopic, kafkaProducer, metricsSupplier);
-  }
-
-  public interface MetricsPublisherSender<K, V> {
-    void sendMetrics(String clientMetricsTopic, KafkaProducer<K, V> kafkaProducer,
-                     Supplier<Map<MetricName, ? extends Metric>> metricsSupplier);
-  }
-
-  public static class MetricsPublisherAVROSender implements MetricsPublisherSender<MetricNameAVRO, MetricValueAVRO> {
-
-    public void sendMetrics(String clientMetricsTopic,
-                            KafkaProducer<MetricNameAVRO, MetricValueAVRO> kafkaProducer,
-                            Supplier<Map<MetricName, ? extends Metric>> metricsSupplier) {
-      metricsSupplier.get()
-              .forEach((key, value) -> kafkaProducer.send(makeRecord(clientMetricsTopic, key, value)));
+    public MetricsPublisher(MetricsSender<V> metricsSender) {
+        this(metricsSender, DEFAULT_METRICS_TOPIC);
     }
 
-    private ProducerRecord<MetricNameAVRO, MetricValueAVRO> makeRecord(String clientMetricsTopic,
-                                                                       MetricName name, Metric metric) {
-      return new ProducerRecord<>(clientMetricsTopic, metricNameAVRO(name), metricValueAVRO(metric));
+    public MetricsPublisher(MetricsSender<V> metricsSender, String clientMetricsTopic) {
+        this.metricsSender = metricsSender;
+        this.clientMetricsTopic = clientMetricsTopic;
     }
 
-    private MetricNameAVRO metricNameAVRO(MetricName name) {
-      return new MetricNameAVRO(name.name(), name.group(),
-          name.tags().entrySet().stream().map(t -> new SimpleEntry<CharSequence, CharSequence>(t.getKey(), t.getValue()))
-              .collect(Collectors.toMap(SimpleEntry::getKey, SimpleEntry::getValue)));
+    public void sendMetrics(KafkaProducer<String, V> kafkaProducer, Supplier<Map<MetricName, ? extends Metric>> metricsSupplier) {
+        this.metricsSender.sendMetrics(this.clientMetricsTopic, kafkaProducer, metricsSupplier);
     }
 
-    private MetricValueAVRO metricValueAVRO(Metric metric) {
-      return new MetricValueAVRO(metric.metricValue().toString());
+    public interface MetricsSender<V> {
+        /**
+         * @param kafkaProducer - `key` is not used, String by the contract here
+         */
+        void sendMetrics(String clientMetricsTopic, KafkaProducer<String, V> kafkaProducer,
+                         Supplier<Map<MetricName, ? extends Metric>> metricsSupplier);
+
+        default String extractMetricName(MetricName metricName) {
+            return metricName.name() + "_" + metricName.group();
+        }
+
+        default String extractMetricValue(Metric metric) {
+            return metric.metricValue().toString();
+        }
+
     }
-  }
 
-  public static class MetricsPublisherJSONSender implements MetricsPublisherSender<String, String> {
+    public static class MetricsAVROSender implements MetricsSender<AVROMetricRecords> {
 
-    private final ObjectMapper mapper = new ObjectMapper();
+        public void sendMetrics(String clientMetricsTopic,
+                                KafkaProducer<String, AVROMetricRecords> kafkaProducer,
+                                Supplier<Map<MetricName, ? extends Metric>> metricsSupplier) {
 
-    public void sendMetrics(String clientMetricsTopic,
-                            KafkaProducer<String, String> kafkaProducer,
-                            Supplier<Map<MetricName, ? extends Metric>> metricsSupplier) {
+            final Map<CharSequence, AVROMetricValue> processedMetrics =
+                    metricsSupplier.get().entrySet().stream() // TODO Use parallelStream perhaps?
+                            .collect(Collectors.toMap(
+                                    e -> extractMetricName(e.getKey()), // TODO What about duplicates??? Use tags?
+                                    e -> new AVROMetricValue(extractMetricValue(e.getValue())),
+                                    (a1, a2) -> a1 // TODO Is there any better way to handle duplicates?
+                            ));
 
-      final Map<String, Object> simpleMetrics =
-          metricsSupplier.get().entrySet().stream() // TODO Use parallelStream perhaps?
-              .collect(Collectors.toMap(
-                  e -> e.getKey().name() + "_" + e.getKey().group(), // TODO What about duplicates???
-                  // TODO How to present doubles in a better way?
-                  //   ["io-wait-ratio_admin-client-metrics":2.6899459316018177E-5]
-                  e -> e.getValue().metricValue(),
-                  // TODO Is there any better way to handle duplicates?
-                  (a1, a2) -> a1
-              ));
-
-      try {
-        kafkaProducer.send(new ProducerRecord<>(clientMetricsTopic, mapper.writeValueAsString(simpleMetrics)));
-      } catch (JsonProcessingException e) {
-        throw new RuntimeException("Failed sending the record to " + clientMetricsTopic, e);
-      }
+            kafkaProducer.send(new ProducerRecord<>(clientMetricsTopic, new AVROMetricRecords(processedMetrics)));
+        }
     }
-  }
+
+    public static class MetricsJSONSender implements MetricsSender<String> {
+
+        private final ObjectMapper mapper = new ObjectMapper();
+
+        public void sendMetrics(String clientMetricsTopic,
+                                KafkaProducer<String, String> kafkaProducer,
+                                Supplier<Map<MetricName, ? extends Metric>> metricsSupplier) {
+
+            final Map<String, Object> simpleMetrics =
+                    metricsSupplier.get().entrySet().stream() // TODO Use parallelStream perhaps?
+                            .collect(Collectors.toMap(
+                                    e -> extractMetricName(e.getKey()), // TODO What about duplicates??? Use tags?
+                                    // TODO How to present doubles in a better way?
+                                    //   ["io-wait-ratio_admin-client-metrics":"2.6899459316018177E-5"]
+                                    e -> extractMetricValue(e.getValue()),
+                                    (a1, a2) -> a1 // TODO Is there any better way to handle duplicates?
+                            ));
+
+            try {
+                kafkaProducer.send(new ProducerRecord<>(clientMetricsTopic, mapper.writeValueAsString(simpleMetrics)));
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException("Failed sending the record to " + clientMetricsTopic, e);
+            }
+        }
+    }
 }
