@@ -3,30 +3,6 @@ package io.confluent.ps.clientwrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.RandomUtils;
-import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_CONFIG_COMMANDS_TOPIC;
-import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_CONFIG_TOPIC;
-import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_META_DATA_TOPIC;
-import static io.confluent.ps.clientwrapper.ClientWrapper.CLIENT_METRICS_TOPIC;
-import static java.util.concurrent.TimeUnit.MINUTES;
-import static org.awaitility.Awaitility.await;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Properties;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import org.apache.commons.lang.math.RandomUtils;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -50,22 +26,17 @@ import java.util.concurrent.*;
 import static io.confluent.ps.clientwrapper.ClientWrapper.*;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertThat;
 
 public class WrapperTest {
 
-  Logger log = LoggerFactory.getLogger(WrapperTest.class);
-
-  @Rule
-//  public KafkaContainer kafka = new KafkaContainer("5.2.0");
-  public KafkaContainer kafka;
-
+  @Rule public KafkaContainer kafka;
 
   public static final int PAUSE_TIME = 1; // a single ms seems to be sufficient for the code to block as expected
 
   ObjectMapper mapper = new ObjectMapper();
-//      .setAnnotationIntrospector(new JacksonLombokAnnotationIntrospector());
 
   @Before
   public void setup() {

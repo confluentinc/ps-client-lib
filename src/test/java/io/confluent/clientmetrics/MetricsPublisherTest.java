@@ -309,7 +309,7 @@ public class MetricsPublisherTest {
 
     private Admin makeKafkaAdminClient() {
         final Properties props = new Properties();
-        props.put(AdminClientConfig.CLIENT_ID_CONFIG, "test-client-metrics-admin");
+        props.put(AdminClientConfig.CLIENT_ID_CONFIG, "test-client-metrics-admin-" + UUID.randomUUID());
         props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
 
         return AdminClient.create(props);
@@ -317,7 +317,7 @@ public class MetricsPublisherTest {
 
     private KafkaStreams makeKafkaStreamsClient() {
         final Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "test-client-metrics-application");
+        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "test-client-metrics-application-" + UUID.randomUUID());
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
         props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
