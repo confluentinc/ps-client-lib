@@ -8,6 +8,10 @@
   <artifactId>client-wrapper</artifactId>
   <version>0.1-SNAPSHOT</version>
 
+  <description>
+    Kafka Client Enhancements
+  </description>
+
   <repositories>
     <repository>
       <id>confluent</id>
@@ -119,6 +123,15 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
+    </dependency>
+    <!-- Used for temp directory -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-clients</artifactId>
+      <version>${version.kafka}</version>
+      <classifier>test</classifier>
+      <!-- TODO move to test -->
+      <scope>compile</scope>
     </dependency>
   </dependencies>
 

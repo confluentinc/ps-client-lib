@@ -11,6 +11,3 @@ mvn clean
 # to generate code from AVRO schemas
 mvn generate-sources
 ```
-
-
-

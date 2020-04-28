@@ -1,8 +1,24 @@
 package io.confluent.ps.clientwrapper;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import org.apache.commons.lang3.StringUtils;
+import com.google.common.collect.Maps;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Properties;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -10,6 +26,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.MetricName;
+import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.streams.KafkaStreams;
@@ -53,8 +71,9 @@ public class ClientWrapper {
   public static final String CLIENT_CONFIG_TOPIC = "_confluent_client_config";
   public static final int TIMEOUT = 1;
 
+  private Map metricKeys = getProducerMetricsMap();
+
   ObjectMapper mapper = new ObjectMapper();
-//      .setAnnotationIntrospector(new JacksonLombokAnnotationIntrospector());
   Javers javers = JaversBuilder.javers().build();
 
   // package private for testing
@@ -94,6 +113,8 @@ public class ClientWrapper {
     config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
     config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
     config.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, 0);
+    config.put(StreamsConfig.STATE_DIR_CONFIG, org.apache.kafka.test.TestUtils.tempDirectory().getAbsolutePath());
+
 
     // TODO assess what to do here?
 //    config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, OffsetResetStrategy.LATEST.toString().toLowerCase());
@@ -110,7 +131,7 @@ public class ClientWrapper {
               WrapperClientConfg newWcConfig = mapper
                   .readValue((String) newValue, WrapperClientConfg.class);
               if (StringUtils.isEmpty(aggValue)) {
-                return (String)newValue;
+                return (String) newValue;
               }
               WrapperClientConfg aggConfig = mapper
                   .readValue(aggValue, WrapperClientConfg.class);
@@ -232,7 +253,7 @@ public class ClientWrapper {
             new LinkedBlockingQueue<Runnable>());
     executorService.execute(config);
   }
-
+  
   private Runnable configWatcherProcess() {
     log.info("Start config watcher...");
     // start monitoring for config changes
