@@ -1,0 +1,17 @@
+@namespace("io.confluent.clientmetrics.avro")
+protocol AVROMetrics {
+
+//  record MetricName {
+//    string name;
+//    string group;
+//    map<string> tags;
+//  }
+
+  record AVROMetricValue {
+    string value;
+  }
+
+  record AVROMetricRecords {
+    map<AVROMetricValue> metrics;
+  }
+}

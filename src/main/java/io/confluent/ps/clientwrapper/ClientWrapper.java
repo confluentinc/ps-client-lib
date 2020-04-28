@@ -1,24 +1,9 @@
 package io.confluent.ps.clientwrapper;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
-import com.google.common.collect.Maps;
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Properties;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import org.apache.commons.lang.StringUtils;
+import io.confluent.common.utils.TestUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -26,8 +11,6 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.MetricName;
-import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.streams.KafkaStreams;
@@ -45,6 +28,19 @@ import org.javers.core.diff.Diff;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Properties;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
 public class ClientWrapper {
 
   public static final String CONFLUENT_CLIENT_CONFIG_STORE_NAME = "_confluent_client_config_store";
@@ -56,10 +52,7 @@ public class ClientWrapper {
   public static final String CLIENT_META_DATA_TOPIC = "_confluent_client_meta_data";
   public static final String CLIENT_CONFIG_COMMANDS_TOPIC = "_confluent_client_config_commands";
   public static final String CLIENT_CONFIG_TOPIC = "_confluent_client_config";
-  public static final String CLIENT_METRICS_TOPIC = "_confluent_client_metrics";
   public static final int TIMEOUT = 1;
-
-  private Map metricKeys = getProducerMetricsMap();
 
   ObjectMapper mapper = new ObjectMapper();
   Javers javers = JaversBuilder.javers().build();
@@ -101,7 +94,7 @@ public class ClientWrapper {
     config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
     config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
     config.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, 0);
-    config.put(StreamsConfig.STATE_DIR_CONFIG, org.apache.kafka.test.TestUtils.tempDirectory().getAbsolutePath());
+    config.put(StreamsConfig.STATE_DIR_CONFIG, TestUtils.tempDirectory().getAbsolutePath());
 
 
     // TODO assess what to do here?
@@ -236,83 +229,10 @@ public class ClientWrapper {
   private void backgroundProcesses() {
     log.info("Load background processes...");
     Runnable config = configWatcherProcess();
-    Runnable metrics = metricsPublisher();
     ExecutorService executorService =
-        new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
+        new ThreadPoolExecutor(1, 2, 0L, TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<Runnable>());
     executorService.execute(config);
-    executorService.execute(metrics);
-  }
-
-  private Runnable metricsPublisher() {
-    log.info("Start metrics publisher...");
-    Runnable metricsPublisher = () -> {
-      // change to non blocking wait
-      try {
-        while (true) {
-          log.info("Publish metrics...");
-          publishMetrics();
-          long sleepTimeMillis = (long) (10000 * Math.random());
-          TimeUnit.MILLISECONDS.sleep(sleepTimeMillis);
-          //Thread.sleep((long) Math.random() * Duration.ofMinutes(2).toMillis());
-        }
-      } catch (Exception e) {
-        e.printStackTrace();
-      }
-    };
-    return metricsPublisher;
-  }
-
-  private void publishMetrics() {
-    // TODO KStream topology
-    publishJMXMetrics();
-  }
-
-  private void publishJMXMetrics() {
-    Map metrics = wrappedProducer.getDelegateProducer().metrics();
-
-    Set<Entry<MetricName, KafkaMetric>> set = metrics.entrySet();
-
-    // TODO surely there's a better solution than Olog(n) :/ - Hook into Yammer Metrics system?
-    set.iterator().forEachRemaining((e) -> {
-      MetricName key = e.getKey();
-      String name = key.name();
-      if (metricKeys.containsKey(name)) {
-        KafkaMetric value = e.getValue();
-        String simpleValue = value.metricValue().toString();
-        metricKeys.put(name, simpleValue);
-        // log.trace(name + ": " + simpleValue);
-      }
-    });
-    metricKeys.put("appId", getMyId());
-    try {
-      mySend(CLIENT_METRICS_TOPIC, mapper.writeValueAsString(metricKeys));
-    } catch (JsonProcessingException e) {
-      throw new ClientWrapperRuntimeException(e);
-    }
-  }
-
-  private Map getProducerMetricsMap() {
-    // Some select JMX metrics
-    Map metricKeys = Maps.newHashMap();
-    metricKeys.put("batch-size-avg", null);
-    metricKeys.put("batch-size-avg", null);
-    metricKeys.put("batch-split-rate", null);
-    metricKeys.put("compression-rate", null);
-    metricKeys.put("record-queue-time-max", null);
-    metricKeys.put("record-queue-time-avg", null);
-    metricKeys.put("record-retry-total", null);
-    metricKeys.put("record-retry-rate", null);
-    metricKeys.put("record-size-max", null);
-    metricKeys.put("record-size-avg", null);
-    metricKeys.put("records-per-request-avg", null);
-    metricKeys.put("request-latency-max", null);
-    metricKeys.put("request-size-avg", null);
-    metricKeys.put("request-size-max", null);
-    metricKeys.put("request-size-avg", null);
-    metricKeys.put("requests-in-flight", null);
-    metricKeys.put("version", null);
-    return metricKeys;
   }
 
   private Runnable configWatcherProcess() {
