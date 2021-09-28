@@ -5,7 +5,7 @@ properties([
         ])
 ])
 
-node('docker-oraclejdk8') {
+node('docker-debian-jdk8') {
   stage('Source') {
     checkout([
         $class: 'GitSCM',
