@@ -1,0 +1,3 @@
+# See go/codeowners - automatically generated for confluentinc/ps-client-lib:
+*	@confluentinc/professionalservice
+*	@confluentinc/ps-admins
