@@ -94,7 +94,7 @@
       <artifactId>kafka-clients</artifactId>
       <version>${version.kafka}</version>
       <classifier>test</classifier>
-      <!-- TODO move to test -->
+      <!-- TODO move to tet -->
       <scope>compile</scope>
     </dependency>
   </dependencies>
